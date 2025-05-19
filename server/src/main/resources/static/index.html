@@ -1,0 +1,642 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cooking Assistant</title>
+    <link rel="stylesheet" href="/css/styles.css">
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+</head>
+<body>
+<div class="header">
+    <div class="burger-menu-icon" id="burger-menu-icon">
+        <span class="material-icons">menu</span>
+    </div>
+    <div class="theme-toggle">
+        <label for="theme-switch">Dark Mode</label>
+        <label class="switch">
+            <input type="checkbox" id="theme-switch">
+            <span class="slider"></span>
+        </label>
+    </div>
+    <div class="cart-icon" id="cart-icon">
+        <span class="material-icons">shopping_cart</span>
+        <span class="cart-count" id="cart-count">0</span>
+    </div>
+</div>
+
+<div class="side-menu-overlay" id="side-menu-overlay"></div>
+<div class="side-menu" id="side-menu">
+    <div class="side-menu-header">
+        <h2>Products</h2>
+        <button class="side-menu-close-button" id="side-menu-close-button">
+            <span class="material-icons">close</span>
+        </button>
+    </div>
+    <div class="products-container">
+        <ul class="products-list" id="products-list">
+            <!-- Products will be added here dynamically -->
+        </ul>
+    </div>
+</div>
+<div style="text-align: center; margin-bottom: 50px;">
+    <img id="logo-image" src="/image/koog_book_logo_dark.png" alt="Koog Book Logo" style="max-width: 200px;">
+</div>
+
+<div class="input-container">
+    <label for="user-prompt">I would like to cook...</label>
+    <input type="text" id="user-prompt" placeholder="I would like to cook...">
+</div>
+
+<div class="cook-container">
+    <button id="cook-button">Cook</button>
+    <div class="loading" id="loading">
+        Finding ingredients...
+    </div>
+</div>
+
+<div class="ingredients-container">
+    <h3 id="ingredients-title">Ingredients</h3>
+    <ul class="ingredients-list" id="ingredients-list">
+        <!-- Ingredients will be added here dynamically -->
+    </ul>
+</div>
+
+<div class="cart-overlay" id="cart-overlay"></div>
+<div class="cart-container" id="cart-container">
+    <div class="cart-header">
+        <h2>Shopping Cart</h2>
+        <button class="cart-close-button" id="cart-close-button">
+            <span class="material-icons">close</span>
+        </button>
+    </div>
+    <ul class="cart-list" id="cart-list">
+        <!-- Cart items will be added here dynamically -->
+    </ul>
+    <div class="cart-total">
+        <span>Total: $</span>
+        <span id="cart-total">0.00</span>
+    </div>
+    <button id="clear-cart-button">Clear Cart</button>
+</div>
+
+<div class="messages-container">
+    <h3>Agent Events</h3>
+    <div id="messages-list">
+        <!-- Agent messages will be added here dynamically -->
+    </div>
+</div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', function () {
+        const ingredientsTitleName = "Ingredients"
+        const ingredientsTitle = document.getElementById('ingredients-title');
+
+        const userPromptInput = document.getElementById('user-prompt');
+        const cookButton = document.getElementById('cook-button');
+        const ingredientsList = document.getElementById('ingredients-list');
+        const messagesList = document.getElementById('messages-list');
+        const loadingIndicator = document.getElementById('loading');
+        const themeSwitch = document.getElementById('theme-switch');
+
+        // Theme handling
+        function setTheme(isDark) {
+            const logoImage = document.getElementById('logo-image');
+            if (isDark) {
+                document.documentElement.setAttribute('data-theme', 'dark');
+                themeSwitch.checked = true;
+                logoImage.src = '/image/koog_book_logo_dark.png';
+            } else {
+                document.documentElement.removeAttribute('data-theme');
+                themeSwitch.checked = false;
+                logoImage.src = '/image/koog_book_logo_light.png';
+            }
+            localStorage.setItem('darkTheme', isDark);
+        }
+
+        // Check for saved theme preference or use dark theme by default
+        const savedTheme = localStorage.getItem('darkTheme');
+        if (savedTheme === 'false') {
+            setTheme(false);
+        } else {
+            setTheme(true);
+        }
+
+        // Handle theme switch
+        themeSwitch.addEventListener('change', function () {
+            setTheme(this.checked);
+        });
+
+        // Handle Enter key press in the input field
+        userPromptInput.addEventListener('keypress', function(event) {
+            if (event.key === 'Enter') {
+                event.preventDefault(); // Prevent default form submission
+                cookButton.click(); // Trigger the cook button click event
+            }
+        });
+
+        let eventSource = null;
+
+        // Events listener
+        cookButton.addEventListener('click', function () {
+            const userPrompt = userPromptInput.value.trim();
+
+            if (!userPrompt) {
+                alert('Please enter what you would like to cook');
+                return;
+            }
+
+            // Clear previous results
+            ingredientsList.innerHTML = '';
+            messagesList.innerHTML = '';
+            loadingIndicator.style.display = 'block';
+
+            // Clear the input field
+            userPromptInput.value = '';
+
+            // Close previous SSE connection for ingredients if exists
+            if (eventSource) {
+                eventSource.close();
+            }
+
+            // SSE
+            eventSource = new EventSource(`/cook?input=${encodeURIComponent(userPrompt)}`);
+
+            // Setup Event Handlers
+            setupAgentEventHandlers(eventSource);
+
+            eventSource.onerror = function (event) {
+                let errorMessage = "Server connection error";
+
+                // Try to extract error message from event data if available
+                if (event.data) {
+                    try {
+                        const message = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
+                        if (message && message.message) {
+                            errorMessage = message.message;
+                        }
+                    } catch (e) {
+                        console.error("Error parsing error event data:", e);
+                    }
+                }
+
+                displayErrorMessage(errorMessage);
+                eventSource.close();
+            };
+        });
+
+        function setupAgentEventHandlers(eventSource) {
+            // // Close previous connection if exists
+            // if (sseSource) {
+            //     sseSource.close();
+            // }
+
+            let ingredientsArr = [];
+
+            eventSource.addEventListener('ingredients', function (event) {
+                loadingIndicator.style.display = 'none';
+                const message = JSON.parse(event.data);
+
+                ingredientsArr = message.ingredients;
+                console.log('Received Ingredients list:', ingredientsArr.join('\n'));
+
+                displayIngredients(ingredientsArr);
+            });
+
+            eventSource.addEventListener('assistant', function (event) {
+                const message = JSON.parse(event.data);
+                console.log("Received message: ", message.message, "")
+                displayAssistantMessage(message.message);
+            });
+
+            eventSource.addEventListener('toolCall', function (event) {
+                const message = JSON.parse(event.data);
+                console.log("Received tool call: ", message.message, "")
+                displayToolCallMessage(message.message);
+            });
+
+            eventSource.addEventListener('assistantError', function (event) {
+                const message = JSON.parse(event.data);
+                console.log("Received error: ", message.message, "")
+                displayErrorMessage(message.message);
+            });
+
+            eventSource.addEventListener('addToCart', function (event) {
+                const product = JSON.parse(event.data);
+                console.log("Received Update Cart with product: ", product.name, "")
+                updateCartState(product)
+                // Display message about adding product to cart
+                displayOtherMessage(`Added to cart: ${product.name} - $${product.price.toFixed(2)}`);
+            });
+
+            eventSource.addEventListener('finish', function (event) {
+                console.log('Received finish event:', event.data);
+                console.log("-------- FINISH --------", "")
+                updateStatus("Agent finished execution")
+                // Display finish message
+                displayOtherMessage("Agent finished execution");
+                eventSource.close();
+            })
+        }
+
+        function displayAssistantMessage(message) {
+            const messageElement = document.createElement('div');
+            messageElement.className = 'message';
+            messageElement.classList.add('assistant');
+
+            // Create circle with "A" for Assistant
+            const circleElement = document.createElement('div');
+            circleElement.className = 'message-circle';
+            circleElement.textContent = 'A';
+
+            // Create content container
+            const contentElement = document.createElement('div');
+            contentElement.className = 'message-content';
+
+            contentElement.textContent = message;
+
+            // Append circle and content to message element
+            messageElement.appendChild(circleElement);
+            messageElement.appendChild(contentElement);
+            messagesList.appendChild(messageElement);
+
+            updateStatus(`Agent: ${message}`)
+
+            eventsScrollDown()
+        }
+
+        function displayToolCallMessage(message) {
+            const messageElement = document.createElement('div');
+            messageElement.className = 'message';
+            messageElement.classList.add('tool-call');
+
+            // Create circle with "T" for Tool Call
+            const circleElement = document.createElement('div');
+            circleElement.className = 'message-circle';
+            circleElement.textContent = 'T';
+
+            // Create content container
+            const contentElement = document.createElement('div');
+            contentElement.className = 'message-content';
+
+            contentElement.textContent = message;
+
+            // Append circle and content to message element
+            messageElement.appendChild(circleElement);
+            messageElement.appendChild(contentElement);
+            messagesList.appendChild(messageElement);
+
+            updateStatus(message)
+
+            eventsScrollDown()
+        }
+
+        function displayErrorMessage(message) {
+            const messageElement = document.createElement('div');
+            messageElement.className = 'message';
+            messageElement.classList.add('error');
+
+            // Create circle with "E" for Error
+            const circleElement = document.createElement('div');
+            circleElement.className = 'message-circle';
+            circleElement.textContent = 'E';
+
+            // Create content container
+            const contentElement = document.createElement('div');
+            contentElement.className = 'message-content';
+
+            contentElement.textContent = message;
+
+            // Append circle and content to message element
+            messageElement.appendChild(circleElement);
+            messageElement.appendChild(contentElement);
+            messagesList.appendChild(messageElement);
+
+            updateStatus(`Error: ${message}`)
+
+            eventsScrollDown()
+        }
+
+        function displayOtherMessage(message) {
+            const messageElement = document.createElement('div');
+            messageElement.className = 'message';
+            messageElement.classList.add('other');
+
+            // Create circle with "M" for Miscellaneous
+            const circleElement = document.createElement('div');
+            circleElement.className = 'message-circle';
+            circleElement.textContent = 'M';
+
+            // Create content container
+            const contentElement = document.createElement('div');
+            contentElement.className = 'message-content';
+
+            contentElement.textContent = message;
+
+            // Append circle and content to message element
+            messageElement.appendChild(circleElement);
+            messageElement.appendChild(contentElement);
+            messagesList.appendChild(messageElement);
+
+            updateStatus(message)
+
+            eventsScrollDown()
+        }
+
+        function displayIngredients(ingredients) {
+            ingredientsList.innerHTML = '';
+            let ingTitle = ingredientsTitleName;
+            if (ingTitle !== ingredientsTitle.textContent) {
+                ingredientsTitle.textContent = ingTitle;
+            }
+
+            ingredients.forEach((ingredient, index) => {
+                const listItem = document.createElement('li');
+                listItem.className = 'ingredient-item';
+                listItem.textContent = `${index + 1}. ${ingredient}`;
+                ingredientsList.appendChild(listItem);
+            });
+
+            updateStatus(`Received ingredients list. Size: ${ingredients.length}`)
+
+            eventsScrollDown();
+        }
+
+        function eventsScrollDown() {
+            messagesList.scrollTop = messagesList.scrollHeight;
+        }
+
+        function updateStatus(message) {
+            loadingIndicator.style.display = 'block';
+            loadingIndicator.textContent = message;
+        }
+
+        // Cart functionality
+        const cartList = document.getElementById('cart-list');
+        const cartTotal = document.getElementById('cart-total');
+        const cartCount = document.getElementById('cart-count');
+        const cartIcon = document.getElementById('cart-icon');
+        const cartContainer = document.getElementById('cart-container');
+        const clearCartButton = document.getElementById('clear-cart-button');
+
+        // Initialize cart
+        let cart = [];
+
+        // Load cart on page load
+        loadCart();
+
+        // Load products on page load
+        loadProducts();
+
+        const cartOverlay = document.getElementById('cart-overlay');
+        const sideMenuOverlay = document.getElementById('side-menu-overlay');
+        const sideMenu = document.getElementById('side-menu');
+        const burgerMenuIcon = document.getElementById('burger-menu-icon');
+        const sideMenuCloseButton = document.getElementById('side-menu-close-button');
+        const productsList = document.getElementById('products-list');
+
+        // Function to open cart
+        function openCart() {
+            cartContainer.classList.add('show');
+            cartOverlay.classList.add('show');
+            document.body.style.overflow = 'hidden'; // Prevent scrolling when cart is open
+        }
+
+        // Function to close cart
+        function closeCart() {
+            cartContainer.classList.remove('show');
+            cartOverlay.classList.remove('show');
+            document.body.style.overflow = ''; // Restore scrolling
+        }
+
+        // Toggle cart visibility when clicking on cart icon
+        cartIcon.addEventListener('click', function() {
+            if (cartContainer.classList.contains('show')) {
+                closeCart();
+            } else {
+                openCart();
+            }
+        });
+
+        // Close cart when clicking on close button
+        const cartCloseButton = document.getElementById('cart-close-button');
+        cartCloseButton.addEventListener('click', function() {
+            closeCart();
+        });
+
+        // Close cart when clicking on overlay
+        cartOverlay.addEventListener('click', function() {
+            closeCart();
+        });
+
+        // Close cart when clicking outside of it (except for the cart icon and overlay which have their own handlers)
+        document.addEventListener('click', function(event) {
+            if (!cartContainer.contains(event.target) &&
+                !cartIcon.contains(event.target) &&
+                !cartOverlay.contains(event.target) &&
+                cartContainer.classList.contains('show')) {
+                closeCart();
+            }
+
+            if (!sideMenu.contains(event.target) &&
+                !burgerMenuIcon.contains(event.target) &&
+                !sideMenuOverlay.contains(event.target) &&
+                sideMenu.classList.contains('show')) {
+                closeSideMenu();
+            }
+        });
+
+        // Clear cart when clicking on clear cart button
+        clearCartButton.addEventListener('click', function() {
+            clearCart();
+        });
+
+        // Function to open side menu
+        function openSideMenu() {
+            sideMenu.classList.add('show');
+            sideMenuOverlay.classList.add('show');
+            document.body.style.overflow = 'hidden'; // Prevent scrolling when side menu is open
+        }
+
+        // Function to close side menu
+        function closeSideMenu() {
+            sideMenu.classList.remove('show');
+            sideMenuOverlay.classList.remove('show');
+            document.body.style.overflow = ''; // Restore scrolling
+        }
+
+        // Toggle side menu visibility when clicking on burger menu icon
+        burgerMenuIcon.addEventListener('click', function() {
+            if (sideMenu.classList.contains('show')) {
+                closeSideMenu();
+            } else {
+                openSideMenu();
+            }
+        });
+
+        // Close side menu when clicking on close button
+        sideMenuCloseButton.addEventListener('click', function() {
+            closeSideMenu();
+        });
+
+        // Close side menu when clicking on overlay
+        sideMenuOverlay.addEventListener('click', function() {
+            closeSideMenu();
+        });
+
+        // Function to add an item to the cart
+        function updateCartState(product) {
+            cart.push(product);
+            updateCartDisplay();
+
+            updateStatus(`Add product to cart: ${product.name}`)
+        }
+
+        // Function to remove an item from the cart
+        function removeFromCart(productId) {
+            // Remove from backend
+            fetch(`/cart/remove?id=${productId}`, {
+                method: 'POST'
+            })
+            .then(response => {
+                if (response.ok) {
+                    // Remove from local cart
+                    cart = cart.filter(item => item.id !== productId);
+                    updateCartDisplay();
+                } else {
+                    alert('Failed to remove product from cart');
+                }
+            })
+            .catch(error => {
+                console.error('Error removing product from cart:', error);
+                alert('Error removing product from cart');
+            });
+        }
+
+        // Function to clear the cart
+        function clearCart() {
+            // Clear backend cart
+            fetch('/cart/clear', {
+                method: 'POST'
+            })
+            .then(response => {
+                if (response.ok) {
+                    // Clear local cart
+                    cart = [];
+                    updateCartDisplay();
+                } else {
+                    alert('Failed to clear cart');
+                }
+            })
+            .catch(error => {
+                console.error('Error clearing cart:', error);
+                alert('Error clearing cart');
+            });
+        }
+
+        // Function to load the cart from the backend
+        function loadCart() {
+            fetch('/cart')
+            .then(response => response.json())
+            .then(data => {
+                cart = data;
+                updateCartDisplay();
+            })
+            .catch(error => {
+                console.error('Error loading cart:', error);
+            });
+        }
+
+        // Function to load products from the backend
+        function loadProducts() {
+            fetch('/products')
+            .then(response => response.json())
+            .then(products => {
+                displayProducts(products);
+            })
+            .catch(error => {
+                console.error('Error loading products:', error);
+            });
+        }
+
+        // Function to display products in the side menu
+        function displayProducts(products) {
+            productsList.innerHTML = '';
+
+            products.forEach(product => {
+                const listItem = document.createElement('li');
+                listItem.className = 'product-item';
+
+                const nameDiv = document.createElement('div');
+                nameDiv.className = 'product-name';
+                nameDiv.textContent = product.name;
+
+                const priceDiv = document.createElement('div');
+                priceDiv.className = 'product-price';
+                priceDiv.textContent = `$${product.price.toFixed(2)}`;
+
+                const actionsDiv = document.createElement('div');
+                actionsDiv.className = 'product-actions';
+
+                const addButton = document.createElement('button');
+                addButton.className = 'add-to-cart-button';
+                addButton.textContent = 'Add to Cart';
+                addButton.addEventListener('click', function() {
+                    updateCartState(product);
+                    // Optional: close the side menu after adding to cart
+                    // closeSideMenu();
+                });
+
+                actionsDiv.appendChild(addButton);
+                listItem.appendChild(nameDiv);
+                listItem.appendChild(priceDiv);
+                listItem.appendChild(actionsDiv);
+                productsList.appendChild(listItem);
+            });
+        }
+
+        // Function to update the cart display
+        function updateCartDisplay() {
+            // Update cart count
+            cartCount.textContent = cart.length;
+
+            // Update cart list
+            cartList.innerHTML = '';
+
+            // Calculate total
+            let total = 0;
+
+            cart.forEach(item => {
+                const listItem = document.createElement('li');
+                listItem.className = 'cart-item';
+
+                const nameSpan = document.createElement('span');
+                nameSpan.className = 'cart-item-name';
+                nameSpan.textContent = item.name;
+
+                const priceSpan = document.createElement('span');
+                priceSpan.className = 'cart-item-price';
+                priceSpan.textContent = `$${item.price.toFixed(2)}`;
+
+                const removeButton = document.createElement('button');
+                removeButton.className = 'remove-from-cart-button';
+                removeButton.textContent = 'Remove';
+                removeButton.addEventListener('click', function() {
+                    removeFromCart(item.id);
+                });
+
+                listItem.appendChild(nameSpan);
+                listItem.appendChild(priceSpan);
+                listItem.appendChild(removeButton);
+                cartList.appendChild(listItem);
+
+                total += item.price;
+            });
+
+            // Update total
+            cartTotal.textContent = total.toFixed(2);
+        }
+    });
+</script>
+</body>
+</html>
