@@ -21,7 +21,7 @@ class CookingAgent() {
     }
 
     private val token: String =
-        System.getenv("OPEN_AI_TOKEN") ?: error("OPEN_AI_TOKEN environment variable is not set")
+        System.getenv("OPENAI_API_KEY") ?: error("OPENAI_API_KEY environment variable is not set")
 
     /**
      * Executes the cooking request using an AI agent with specific strategies and tools, and processes
